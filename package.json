@@ -1,0 +1,17 @@
+{
+  "name": "discord2revolt",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.11.0",
+    "emoji-text": "^0.2.6",
+    "mongodb": "^5.5.0",
+    "revolt.js": "^7.0.0-beta.4"
+  }
+}
