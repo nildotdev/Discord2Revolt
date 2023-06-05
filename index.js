@@ -1,8 +1,13 @@
 const revolt = require("revolt.js");
 const Discord = require("discord.js")
 const emojiText = require("emoji-text")
-const { MongoClient } = require('mongodb');
-const dclient = new Discord.Client({ intents: [Discord.GatewayIntentBits.DirectMessages, Discord.GatewayIntentBits.GuildMembers, Discord.GatewayIntentBits.GuildMessages, Discord.GatewayIntentBits.Guilds, Discord.GatewayIntentBits.MessageContent] });
+const snek = require("snekfetch")
+const {
+    MongoClient
+} = require('mongodb');
+const dclient = new Discord.Client({
+    intents: [Discord.GatewayIntentBits.DirectMessages, Discord.GatewayIntentBits.GuildMembers, Discord.GatewayIntentBits.GuildMessages, Discord.GatewayIntentBits.Guilds, Discord.GatewayIntentBits.MessageContent]
+});
 const client = new revolt.Client();
 const prefix = "!!"
 const url = 'mongodb://127.0.0.1:27017';
@@ -10,7 +15,7 @@ const database = new MongoClient(url);
 const cfg = require("./config.json")
 var awaiting = []
 client.on("ready", async () => {
-  console.log(`Logged in as ${client.user.username}!`)
+    console.log(`Logged in as ${client.user.username}!`)
 })
 dclient.on("ready", async () => {
     await database.connect()
@@ -18,40 +23,104 @@ dclient.on("ready", async () => {
 })
 
 client.on("messageCreate", async (message) => {
-    if(message.masquerade !== undefined) return;
+    if (message.masquerade !== undefined) return;
+    if (message.authorId === client.user.id) return;
     const db = database.db("RevoltBridge")
     const col = db.collection("servers")
     const msgcol = db.collection("messages")
-    col.findOne({ revolt: message.server.id }).then(async svr => {
+    col.findOne({
+        revolt: message.server.id
+    }).then(async svr => {
         if (svr !== null) {
-            let connectedGuild = await dclient.guilds.fetch({ guild: svr.id });
+            let connectedGuild = await dclient.guilds.fetch({
+                guild: svr.id
+            });
             let matchedChannel = (await connectedGuild.channels.fetch()).find(i => i.name === message.channel.name);
             if (matchedChannel) {
-                try {
-                    (await (await connectedGuild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook").edit({ channel: matchedChannel.id })).send({ content: message.content, username: message.username, avatarURL: message.avatarURL }).then(msg => {
-                        msgcol.insertOne({
-                            dch: msg.channelId,
-                            did: msg.id,
-                            rid: message.id,
-                            sid: msg.guildId,
-                            type: "discord"
-                        })
+                const atts = message.attachments?.map((attachment) => {
+                    return {
+                        file: `https://autumn.revolt.chat/attachments/${attachment.id}/${encodeURIComponent(attachment.filename)}`,
+                        alt: attachment.filename,
+                        spoiler: false,
+                        name: attachment.filename,
+                    };
+                }) || []
+                var msgatts = []
+                for (let att of atts) {
+                    msgatts.push({
+                        attachment: att.file,
+                        name: att.name
                     })
+                }
+                var repls = []
+                if (message.replyIds) {
+                    for (let repl of message.replyIds) {
+                        const reply = await message.channel.fetchMessage(repl)
+                        var embd
+                        if (!reply.masquerade) {
+                            embd = new Discord.EmbedBuilder()
+                                .setAuthor({
+                                    name: `reply to ${reply.author ? reply.author.username : "UNDEFINED"}`,
+                                    iconURL: reply.author ? reply.author.avatarURL : undefined
+                                })
+                                .setDescription(reply.content)
+                        } else {
+                            embd = new Discord.EmbedBuilder()
+                                .setAuthor({
+                                    name: `reply to ${reply.masquerade.name}`,
+                                    iconURL: reply.masquerade.avatar ? reply.masquerade.avatar : undefined
+                                })
+                                .setDescription(reply.content)
+                        }
+                        repls.push(embd)
+                    }
+                }
+                try {
+                    const webhook = (await connectedGuild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook")
+                    if (webhook) {
+                        if (webhook.channelId !== matchedChannel.id) {
+                            await webhook.edit({
+                                channel: matchedChannel.id
+                            })
+                        }
+                        webhook.send({
+                            content: message.content,
+                            username: message.username,
+                            avatarURL: message.avatarURL,
+                            files: msgatts,
+                            allowedMentions: {
+                                parse: []
+                            },
+                            embeds: repls
+                        }).then(msg => {
+                            msgcol.insertOne({
+                                dch: msg.channelId,
+                                did: msg.id,
+                                rid: message.id,
+                                sid: msg.guildId,
+                                rch: message.channelId
+                            })
+                        })
+                    }
                 } catch {
-                    matchedChannel.send(`${message.username}: ${message.content}`).then(msg => {
+                    matchedChannel.send({
+                        content: `${message.username}: ${message.content}`,
+                        files: msgatts,
+                        embeds: repls
+                    }).then(msg => {
                         msgcol.insertOne({
                             dch: msg.channelId,
                             did: msg.id,
                             rid: message.id,
                             sid: msg.guildId,
-                            type: "discord"
+                            rch: message.channelId
                         })
                     })
                 }
             }
         }
     })
-    if(!message.content.startsWith(prefix)) return
+    if (!message.content.startsWith(prefix)) return
     const args = message.content.split(" ").slice(1)
     const command = message.content.split(" ")[0].replace(prefix, "")
     switch (command) {
@@ -84,24 +153,35 @@ client.on("messageCreate", async (message) => {
 });
 
 dclient.on("messageCreate", async (message) => {
-    if (message.webhookId) return
+    if (message.author.id === dclient.user.id) return
+    if (message.webhookId) {
+        const detwebhook = (await message.guild.fetchWebhooks()).find(i => i.id === message.webhookId)
+        if (detwebhook && detwebhook.name === "RevoltBridgeHook") {
+            return
+        }
+    }
     const db = database.db("RevoltBridge")
     const col = db.collection("servers")
     const msgcol = db.collection("messages")
-    col.findOne({ id: message.guildId }).then(async svr => {
+    col.findOne({
+        id: message.guildId
+    }).then(async svr => {
         if (svr !== null) {
             let connectedGuild = await client.servers.fetch(svr.revolt);
             let matchedChannel = connectedGuild.channels.find(i => i.name === message.channel.name);
             if (matchedChannel) {
-                var parsedContent = emojiText.convert(message.content, { delimiter: ':' })
+                var parsedContent = emojiText.convert(message.content, {
+                    delimiter: ':'
+                })
                 var content = parsedContent === "" ? "*empty*" : parsedContent
                 var attachments = []
+                var embds = []
                 for (const [_, val] of message.attachments.entries()) {
                     try {
                         var formdat = new FormData()
                         formdat.append("file", await fetch(val.proxyURL).then((res) =>
-						    res.blob()
-					    ))
+                            res.blob()
+                        ))
                         attachments.push(
                             (
                                 await (
@@ -117,33 +197,46 @@ dclient.on("messageCreate", async (message) => {
                         content += "\nattachment: " + val.proxyURL
                     }
                 }
+                if (message.reference) {
+                    const ref = await message.fetchReference()
+                    embds.push({
+                        title: `reply to ${ref.author.tag}`,
+                        description: ref.content.length < 1 ? "*empty*" : ref.content
+                    })
+                }
                 matchedChannel.sendMessage({
                     masquerade: {
                         name: message.author.username,
                         avatar: message.author.avatarURL()
                     },
                     content: content,
-                    attachments: attachments.length ? attachments : null
+                    attachments: attachments.length ? attachments : null,
+                    embeds: embds.length ? embds : null
                 }).then(msg => {
                     msgcol.insertOne({
                         rch: msg.channelId,
                         rid: msg.id,
                         did: message.id,
                         sid: message.guildId,
-                        type: "revolt"
+                        dch: message.channelId
                     })
                 })
             }
         }
     })
-    if(!message.content.startsWith(prefix)) return
+    if (!message.content.startsWith(prefix)) return
     const args = message.content.split(" ").slice(1)
     const command = message.content.split(" ")[0].replace(prefix, "")
     switch (command) {
         case "webhook":
             try {
-                (await (await message.guild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook").edit({ channel: message.channel.id })).send({ content: "Hello, World!", username: "Webhook Test" })
-            } catch(err) {
+                (await (await message.guild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook").edit({
+                    channel: message.channel.id
+                })).send({
+                    content: "Hello, World!",
+                    username: "Webhook Test"
+                })
+            } catch (err) {
                 message.reply("Whoops! " + err.toString())
             }
             break;
@@ -159,9 +252,13 @@ dclient.on("messageCreate", async (message) => {
             })
             message.reply("Done! Feel free to kick the bot. Remember to delete the webhook!")
             try {
-                (await (await message.guild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook").edit({ channel: message.channel.id })).send({ content: "Hello, feel free to delete me!", username: "Webhook Test" })
-            } catch {
-            }
+                (await (await message.guild.fetchWebhooks()).find(i => i.name === "RevoltBridgeHook").edit({
+                    channel: message.channel.id
+                })).send({
+                    content: "Hello, feel free to delete me!",
+                    username: "Webhook Test"
+                })
+            } catch {}
             break;
         case "connect":
             if (message.author.id !== message.guild.ownerId) return message.reply("you need to be the owner in order to connect 2 servers.")
@@ -180,14 +277,14 @@ dclient.on("messageCreate", async (message) => {
                         setTimeout(() => {
                             if (dch.type !== Discord.ChannelType.GuildCategory) {
                                 server.createChannel({
-                                    name: dch.name,
-                                    type: (dch.type === Discord.ChannelType.GuildVoice || dch.type === Discord.ChannelType.GuildStageVoice) ? "Voice" : "Text",
-                                    description: dch.topic,
-                                    nsfw: dch.nsfw
-                                })
-                                .catch(err => {
-                                    message.reply(err.toString())
-                                })
+                                        name: dch.name,
+                                        type: (dch.type === Discord.ChannelType.GuildVoice || dch.type === Discord.ChannelType.GuildStageVoice) ? "Voice" : "Text",
+                                        description: dch.topic,
+                                        nsfw: dch.nsfw
+                                    })
+                                    .catch(err => {
+                                        message.reply(err.toString())
+                                    })
                             }
                         }, 5000 * index);
                         index++
@@ -203,17 +300,17 @@ dclient.on("messageCreate", async (message) => {
                         })
                         message.reply("Done! Creating webhook...")
                         message.channel.createWebhook({
-                            name: "RevoltBridgeHook",
-                            avatar: "https://i.imgur.com/AfFp7pu.png"
-                        })
-                        .then(() => {
-                            message.reply("All done. Restarting bot (cache reset)...").then(() => {
-                                process.exit(1)
+                                name: "RevoltBridgeHook",
+                                avatar: "https://i.imgur.com/AfFp7pu.png"
                             })
-                        })
-                        .catch(err => {
-                            message.reply(`Error while webhook creation: ${err.toString()}`)
-                        })
+                            .then(() => {
+                                message.reply("All done. Restarting bot (cache reset)...").then(() => {
+                                    process.exit(1)
+                                })
+                            })
+                            .catch(err => {
+                                message.reply(`Error while webhook creation: ${err.toString()}`)
+                            })
                     }, 5000 * channels.size);
                 } else {
                     message.reply("Not awaiting.")
@@ -232,7 +329,6 @@ dclient.on("messageDelete", async (delmsg) => {
     const db = database.db("RevoltBridge")
     const msgcol = db.collection("messages")
     const delmsgdb = await msgcol.findOne({
-        type: "revolt",
         did: delmsg.id
     })
     if (delmsgdb) {
@@ -249,7 +345,6 @@ client.on("messageDelete", async (delmsg) => {
     const db = database.db("RevoltBridge")
     const msgcol = db.collection("messages")
     const delmsgdb = await msgcol.findOne({
-        type: "discord",
         rid: delmsg.id
     })
     if (delmsgdb) {
