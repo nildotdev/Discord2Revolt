@@ -35,7 +35,7 @@ client.on("messageCreate", async (message) => {
             let connectedGuild = await dclient.guilds.fetch({
                 guild: svr.id
             });
-            let matchedChannel = (await connectedGuild.channels.fetch()).find(i => i.name === message.channel.name);
+            let matchedChannel = (await connectedGuild.channels.fetch()).find(i => (i.name === message.channel.name || i.name.replace(/-/g, " ") === message.channel.name));
             if (matchedChannel) {
                 const atts = message.attachments?.map((attachment) => {
                     return {
@@ -127,8 +127,8 @@ client.on("messageCreate", async (message) => {
         case "masquerade":
             message.reply({
                 masquerade: {
-                    name: "test",
-                    avatar: "https://i.imgur.com/AfFp7pu.png"
+                    name: dclient.user.username,
+                    avatar: dclient.user.avatarURL()
                 },
                 content: "hello, world!"
             })
@@ -168,7 +168,7 @@ dclient.on("messageCreate", async (message) => {
     }).then(async svr => {
         if (svr !== null) {
             let connectedGuild = await client.servers.fetch(svr.revolt);
-            let matchedChannel = connectedGuild.channels.find(i => i.name === message.channel.name);
+            let matchedChannel = connectedGuild.channels.find(i => (i.name === message.channel.name || i.name === message.channel.name.replace(/-/g, " ")));
             if (matchedChannel) {
                 var parsedContent = emojiText.convert(message.content, {
                     delimiter: ':'
@@ -204,6 +204,33 @@ dclient.on("messageCreate", async (message) => {
                         description: ref.content.length < 1 ? "*empty*" : ref.content
                     })
                 }
+                if (message.embeds) {
+                    for (let embd of message.embeds) {
+                        let att = ""
+                        if (embd.image) {
+                            var formdat = new FormData()
+                            formdat.append("file", await fetch(embd.image.proxyURL).then((res) =>
+                                res.blob()
+                            ))
+                            att = (
+                                await (
+                                    await fetch(`https://autumn.revolt.chat/attachments`, {
+                                        method: "POST",
+                                        body: formdat,
+                                    })
+                                ).json()
+                            ).id
+                        }
+                        embds.push({
+                            icon_url: embd.thumbnail ? embd.thumbnail.url : null,
+                            url: embd.url,
+                            title: embd.title,
+                            description: embd.description,
+                            media: att ? att : null,
+                            colour: embd.hexColor
+                        })
+                    }
+                }
                 matchedChannel.sendMessage({
                     masquerade: {
                         name: message.author.username,
@@ -234,12 +261,18 @@ dclient.on("messageCreate", async (message) => {
                     channel: message.channel.id
                 })).send({
                     content: "Hello, World!",
-                    username: "Webhook Test"
+                    username: client.user.username,
+                    avatarURL: client.user.avatarURL
                 })
             } catch (err) {
                 message.reply("Whoops! " + err.toString())
             }
             break;
+		case "update":
+		    await message.react("🔃")
+			await message.react("✅")
+			process.exit()
+		    break
         case "disconnect":
             if (message.author.id !== message.guild.ownerId) return message.reply("you need to be the owner in order to disconnect 2 servers.")
             message.reply("Wiping messages from db...")
@@ -260,6 +293,11 @@ dclient.on("messageCreate", async (message) => {
                 })
             } catch {}
             break;
+		case "exit":
+		    message.reply("rest in pepperoni").then(() => {
+				message.reply("failed to kill parent process")
+			})
+		    break;
         case "connect":
             if (message.author.id !== message.guild.ownerId) return message.reply("you need to be the owner in order to connect 2 servers.")
             if (!args[0]) return message.reply("you need to specify the revolt server ID.")
